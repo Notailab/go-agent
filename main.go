@@ -59,6 +59,7 @@ func main() {
 	}
 
 	reporter := &agent.StdoutReporter{}
+	memory := core.NewFileBackedMemory(".memory/HISTORY.jsonl")
 	agent := agent.NewReactAgent(
 		agent.WithLLM(baseURL, model, apiKey),
 		agent.WithTools(
@@ -66,8 +67,9 @@ func main() {
 			&tools.ReadFileTool{},
 			&tools.EditFileTool{},
 			&tools.WriteFileTool{},
+			tools.NewLongMemoryTool(memory),
 		),
-		agent.WithMemory(core.NewFileBackedMemory(".memory/HISTORY.jsonl")),
+		agent.WithMemory(memory),
 		agent.WithSkills("skills"),
 		agent.WithReporter(reporter),
 		agent.WithMaxTokens(12000),

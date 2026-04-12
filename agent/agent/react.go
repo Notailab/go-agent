@@ -31,6 +31,7 @@ func NewReactAgent(opts ...agentOption) *ReactAgent {
 }
 
 func DefaultReactAgent(baseUrl, model, apiKey string) *ReactAgent {
+	memory := core.NewMemory()
 	return NewReactAgent(
 		WithLLM(baseUrl, model, apiKey),
 		WithTools(
@@ -38,8 +39,9 @@ func DefaultReactAgent(baseUrl, model, apiKey string) *ReactAgent {
 			&tools.EditFileTool{},
 			&tools.ReadFileTool{},
 			&tools.WriteFileTool{},
+			tools.NewLongMemoryTool(memory),
 		),
-		WithMemory(core.NewMemory()),
+		WithMemory(memory),
 		WithSkills("skills"),
 	)
 }

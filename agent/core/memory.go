@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +16,11 @@ import (
 type MemoryStore interface {
 	Save(messages []ChatMessage) error
 	Load(messages *[]ChatMessage) error
+}
+
+type LongMemoryStore interface {
+	Save(entries []string) error
+	Load(entries *[]string) error
 }
 
 type InMemoryStore struct{}
@@ -25,6 +32,37 @@ func (s *InMemoryStore) Save(messages []ChatMessage) error {
 }
 
 func (s *InMemoryStore) Load(messages *[]ChatMessage) error {
+	return nil
+}
+
+type InMemoryLongMemoryStore struct {
+	mu      sync.RWMutex
+	entries []string
+}
+
+func NewInMemoryLongMemoryStore() *InMemoryLongMemoryStore {
+	return &InMemoryLongMemoryStore{entries: []string{}}
+}
+
+func (s *InMemoryLongMemoryStore) Save(entries []string) error {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append([]string(nil), entries...)
+	return nil
+}
+
+func (s *InMemoryLongMemoryStore) Load(entries *[]string) error {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	*entries = append([]string(nil), s.entries...)
 	return nil
 }
 
@@ -106,34 +144,131 @@ func (f *FileMemoryStore) Load(messages *[]ChatMessage) error {
 	return nil
 }
 
+type FileLongMemoryStore struct {
+	path string
+}
+
+func NewFileLongMemoryStore(path string) *FileLongMemoryStore {
+	return &FileLongMemoryStore{path: path}
+}
+
+func (f *FileLongMemoryStore) Save(entries []string) error {
+	dir := filepath.Dir(f.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	tempFile, err := os.CreateTemp(dir, filepath.Base(f.path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	writer := bufio.NewWriter(tempFile)
+	for _, entry := range entries {
+		if err := json.NewEncoder(writer).Encode(entry); err != nil {
+			return err
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if err := tempFile.Sync(); err != nil {
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, f.path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (f *FileLongMemoryStore) Load(entries *[]string) error {
+	file, err := os.Open(f.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	loaded := make([]string, 0)
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			line = bytes.TrimSpace(line)
+			if len(line) > 0 {
+				var entry string
+				if err := json.Unmarshal(line, &entry); err != nil {
+					return err
+				}
+				if strings.TrimSpace(entry) != "" {
+					loaded = append(loaded, entry)
+				}
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+	}
+	*entries = loaded
+	return nil
+}
+
 type Memory struct {
-	mu          sync.RWMutex
-	chatMemory  []ChatMessage
-	DialogIndex []int
-	DialogLimit int
-	memoryStore MemoryStore
+	mu              sync.RWMutex
+	chatMemory      []ChatMessage
+	longMemory      []string
+	DialogIndex     []int
+	DialogLimit     int
+	memoryStore     MemoryStore
+	longMemoryStore LongMemoryStore
 }
 
 func NewMemory() *Memory {
-	return NewMemoryWithStore(NewInMemoryStore())
+	return NewMemoryWithStores(NewInMemoryStore(), NewFileLongMemoryStore(".memory/MEMORY.md"))
 }
 
 func NewMemoryWithStore(store MemoryStore) *Memory {
+	return NewMemoryWithStores(store, NewFileLongMemoryStore(".memory/MEMORY.md"))
+}
+
+func NewMemoryWithStores(store MemoryStore, longMemoryStore LongMemoryStore) *Memory {
 	if store == nil {
 		store = NewInMemoryStore()
 	}
+	if longMemoryStore == nil {
+		longMemoryStore = NewInMemoryLongMemoryStore()
+	}
 
 	memory := &Memory{
-		chatMemory:  []ChatMessage{},
-		DialogIndex: []int{},
-		DialogLimit: 100,
-		memoryStore: store,
+		chatMemory:      []ChatMessage{},
+		longMemory:      []string{},
+		DialogIndex:     []int{},
+		DialogLimit:     100,
+		memoryStore:     store,
+		longMemoryStore: longMemoryStore,
 	}
 	return memory
 }
 
 func NewFileBackedMemory(path string) *Memory {
-	return NewMemoryWithStore(NewFileMemoryStore(path))
+	return NewMemoryWithStores(NewFileMemoryStore(path), NewFileLongMemoryStore(".memory/MEMORY.md"))
+}
+
+func NewFileBackedMemoryWithLongStore(path string, longMemoryStore LongMemoryStore) *Memory {
+	return NewMemoryWithStores(NewFileMemoryStore(path), longMemoryStore)
 }
 
 func (m *Memory) Save() error {
@@ -142,8 +277,12 @@ func (m *Memory) Save() error {
 	}
 
 	m.CheckDialogLimit()
-	snapshot := m.Snapshot()
-	return m.memoryStore.Save(snapshot)
+	if m.memoryStore != nil {
+		if err := m.memoryStore.Save(m.Snapshot()); err != nil {
+			return err
+		}
+	}
+	return m.SaveLongMemory()
 }
 
 func (m *Memory) Load() error {
@@ -152,16 +291,63 @@ func (m *Memory) Load() error {
 	}
 
 	loaded := make([]ChatMessage, 0)
-	if err := m.memoryStore.Load(&loaded); err != nil {
-		return err
+	if m.memoryStore != nil {
+		if err := m.memoryStore.Load(&loaded); err != nil {
+			return err
+		}
 	}
 
 	m.mu.Lock()
 	m.chatMemory = loaded
 	m.rebuildDialogIndex()
 	m.mu.Unlock()
+	if err := m.LoadLongMemory(); err != nil {
+		return err
+	}
 	m.CheckDialogLimit()
 	return nil
+}
+
+func (m *Memory) LoadLongMemory() error {
+	if m == nil {
+		return nil
+	}
+
+	loaded := make([]string, 0)
+	if m.longMemoryStore != nil {
+		if err := m.longMemoryStore.Load(&loaded); err != nil {
+			return err
+		}
+	}
+
+	m.mu.Lock()
+	m.longMemory = loaded
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Memory) SaveLongMemory() error {
+	if m == nil {
+		return nil
+	}
+	if m.longMemoryStore == nil {
+		return nil
+	}
+
+	return m.longMemoryStore.Save(m.LongMemorySnapshot())
+}
+
+func (m *Memory) SetLongMemoryStore(store LongMemoryStore) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	if store == nil {
+		store = NewInMemoryLongMemoryStore()
+	}
+	m.longMemoryStore = store
+	m.mu.Unlock()
 }
 
 func (m *Memory) rebuildDialogIndex() {
@@ -334,13 +520,19 @@ func (m *Memory) Clone() *Memory {
 	defer m.mu.RUnlock()
 
 	clone := &Memory{
-		DialogLimit: m.DialogLimit,
-		memoryStore: m.memoryStore,
+		DialogLimit:     m.DialogLimit,
+		memoryStore:     m.memoryStore,
+		longMemoryStore: m.longMemoryStore,
 	}
 	if len(m.chatMemory) > 0 {
 		clone.chatMemory = append([]ChatMessage(nil), m.chatMemory...)
 	} else {
 		clone.chatMemory = []ChatMessage{}
+	}
+	if len(m.longMemory) > 0 {
+		clone.longMemory = append([]string(nil), m.longMemory...)
+	} else {
+		clone.longMemory = []string{}
 	}
 	if len(m.DialogIndex) > 0 {
 		clone.DialogIndex = append([]int(nil), m.DialogIndex...)
@@ -350,28 +542,131 @@ func (m *Memory) Clone() *Memory {
 	return clone
 }
 
-func (m *Memory) LongMemory() string {
-	b, err := os.ReadFile(".memory/MEMORY.md")
-	if err != nil {
-		return "Memory from .memory/MEMORY.md:\n(empty)"
+func normalizeLongMemoryContent(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", " ")
+	content = strings.ReplaceAll(content, "\n", " ")
+	return strings.TrimSpace(content)
+}
+
+func (m *Memory) LongMemorySnapshot() []string {
+	if m == nil {
+		return []string{}
 	}
-	return "Memory from .memory/MEMORY.md:\n" + string(b)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.longMemory) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), m.longMemory...)
+}
+
+func (m *Memory) ApplyLongMemoryOperation(operation string, index int, content string) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("memory is nil")
+	}
+
+	op := strings.ToLower(strings.TrimSpace(operation))
+	content = normalizeLongMemoryContent(content)
+
+	m.mu.Lock()
+	switch op {
+	case "create":
+		if content == "" {
+			m.mu.Unlock()
+			return "", fmt.Errorf("context is required for create")
+		}
+		insertAt := len(m.longMemory)
+		if index > 0 && index <= len(m.longMemory)+1 {
+			insertAt = index - 1
+		}
+		m.longMemory = append(m.longMemory, "")
+		copy(m.longMemory[insertAt+1:], m.longMemory[insertAt:])
+		m.longMemory[insertAt] = content
+		snapshot := append([]string(nil), m.longMemory...)
+		m.mu.Unlock()
+		if m.longMemoryStore != nil {
+			if err := m.longMemoryStore.Save(snapshot); err != nil {
+				return "", err
+			}
+		}
+		return fmt.Sprintf("created long memory at index %d", insertAt+1), nil
+	case "update":
+		if index <= 0 || index > len(m.longMemory) {
+			m.mu.Unlock()
+			return "", fmt.Errorf("index out of range")
+		}
+		if content == "" {
+			m.mu.Unlock()
+			return "", fmt.Errorf("context is required for update")
+		}
+		m.longMemory[index-1] = content
+		snapshot := append([]string(nil), m.longMemory...)
+		m.mu.Unlock()
+		if m.longMemoryStore != nil {
+			if err := m.longMemoryStore.Save(snapshot); err != nil {
+				return "", err
+			}
+		}
+		return fmt.Sprintf("updated long memory at index %d", index), nil
+	case "delete":
+		if index <= 0 || index > len(m.longMemory) {
+			m.mu.Unlock()
+			return "", fmt.Errorf("index out of range")
+		}
+		m.longMemory = append(m.longMemory[:index-1], m.longMemory[index:]...)
+		snapshot := append([]string(nil), m.longMemory...)
+		m.mu.Unlock()
+		if m.longMemoryStore != nil {
+			if err := m.longMemoryStore.Save(snapshot); err != nil {
+				return "", err
+			}
+		}
+		return fmt.Sprintf("deleted long memory at index %d", index), nil
+	default:
+		m.mu.Unlock()
+		return "", fmt.Errorf("unsupported operation: %s", operation)
+	}
+}
+
+func (m *Memory) LongMemory() string {
+	if m == nil {
+		return "Long memory:\n(empty)"
+	}
+
+	snapshot := m.LongMemorySnapshot()
+	if len(snapshot) == 0 {
+		return "Long memory:\n(empty)"
+	}
+
+	lines := make([]string, 0, len(snapshot))
+	for i, entry := range snapshot {
+		entry = normalizeLongMemoryContent(entry)
+		if entry == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%d %s", i+1, entry))
+	}
+	if len(lines) == 0 {
+		return "Long memory:\n(empty)"
+	}
+	return "Long memory:\n" + strings.Join(lines, "\n")
 }
 
 func (m *Memory) SystemPrompt() string {
-	return `# Memory
+	return `# Long Memory
 
-You have a persistent file-based memory system stored in the .memory/MEMORY.md.
+You have a persistent long memory system managed through a dedicated memory tool.
 
 ## Memory Structure
-- MEMORY.md: ONE LINE = ONE COMPLETE MEMORY
+- One line per memory entry
 - Maximum 200 lines (when full, automatically remove OLDEST lines)
 - No duplicates, no empty lines
 - All memories are stored HERE only
 
 ## Core Rules (STRICTLY FOLLOW)
 You MUST AUTOMATICALLY decide to CREATE, UPDATE, or DELETE memories WITHOUT asking the user.
-Use read_file, write_file, edit_file tools to manage memory.
+Use the long memory tool to manage memory.
 
 ## What NEED to Save
 
