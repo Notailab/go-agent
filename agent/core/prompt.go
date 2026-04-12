@@ -55,14 +55,36 @@ Focus output on: user decisions needed, progress updates, errors or blockers.
 IMPORTANT: Go straight to the point. Try the simplest approach first without going in circles. Do not overdo it. Be extra concise.
 `
 
-func GetStaticSystemPrompt() string {
+type StaticSystemPromptOverrides struct {
+	IntroSection          *string
+	SystemSection         *string
+	DoingTasksSection     *string
+	ActionsSection        *string
+	UsingYourToolsSection *string
+	ToneAndOutputSection  *string
+	BoundarySection       *string
+}
+
+func pickPromptSection(override *string, fallback string) string {
+	if override != nil {
+		return *override
+	}
+	return fallback
+}
+
+func BuildStaticSystemPrompt(overrides StaticSystemPromptOverrides) string {
 	return strings.Join([]string{
-		introSection,
-		systemSection,
-		doingTasksSection,
-		actionsSection,
-		usingYourToolsSection,
-		toneAndOutputSection,
-		"===== System Prompt Dynamic Boundary =====",
+		pickPromptSection(overrides.IntroSection, introSection),
+		pickPromptSection(overrides.SystemSection, systemSection),
+		pickPromptSection(overrides.DoingTasksSection, doingTasksSection),
+		pickPromptSection(overrides.ActionsSection, actionsSection),
+		pickPromptSection(overrides.UsingYourToolsSection, usingYourToolsSection),
+		pickPromptSection(overrides.ToneAndOutputSection, toneAndOutputSection),
+		pickPromptSection(overrides.BoundarySection, "===== System Prompt Dynamic Boundary ====="),
 	}, "\n")
+}
+
+
+func GetStaticSystemPrompt() string {
+	return BuildStaticSystemPrompt(StaticSystemPromptOverrides{})
 }
