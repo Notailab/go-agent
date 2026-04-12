@@ -14,8 +14,6 @@ A small interactive AI Agent written in Go.
 - Automatic skill discovery and registration from the `skills` directory
 - Demo CLI entry point in `main.go`
 
----
-
 ## Quick Start
 
 ### 1. Requirements
@@ -52,8 +50,6 @@ The demo will:
 - save memory again when you exit
 
 Type `exit` to quit.
-
----
 
 ## Tools
 
