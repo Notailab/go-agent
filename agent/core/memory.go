@@ -141,6 +141,7 @@ func (m *Memory) Save() error {
 		return nil
 	}
 
+	m.CheckDialogLimit()
 	snapshot := m.Snapshot()
 	return m.memoryStore.Save(snapshot)
 }
@@ -159,6 +160,7 @@ func (m *Memory) Load() error {
 	m.chatMemory = loaded
 	m.rebuildDialogIndex()
 	m.mu.Unlock()
+	m.CheckDialogLimit()
 	return nil
 }
 
