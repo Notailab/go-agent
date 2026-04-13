@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Notailab/go-agent/agent/core"
+	"github.com/Notailab/go-agent/agent/storage"
 	"github.com/Notailab/go-agent/agent/tools"
 )
 
@@ -31,7 +32,10 @@ func NewReactAgent(opts ...agentOption) *ReactAgent {
 }
 
 func DefaultReactAgent(baseUrl, model, apiKey string) *ReactAgent {
-	memory := core.NewMemory()
+	memory := core.NewMemory(
+		storage.NewInMemoryChatStore(),
+		storage.NewInMemoryLongStore(),
+	)
 	return NewReactAgent(
 		WithLLM(baseUrl, model, apiKey),
 		WithTools(
@@ -44,20 +48,6 @@ func DefaultReactAgent(baseUrl, model, apiKey string) *ReactAgent {
 		WithMemory(memory),
 		WithSkills("skills"),
 	)
-}
-
-func (r *ReactAgent) MemoryLoad() error {
-	if r.agent.Memory == nil {
-		return fmt.Errorf("memory is nil")
-	}
-	return r.agent.Memory.Load()
-}
-
-func (r *ReactAgent) MemorySave() error {
-	if r.agent.Memory == nil {
-		return fmt.Errorf("memory is nil")
-	}
-	return r.agent.Memory.Save()
 }
 
 func (r *ReactAgent) CurTokens() int {
@@ -154,18 +144,22 @@ func (r *ReactAgent) CompactHistory() {
 		return
 	}
 
-	snapshot := r.agent.Memory.Snapshot()
+	snapshot := r.agent.Memory.ChatMemory()
 	if len(snapshot) == 0 {
 		return
 	}
 
 	targetIndex := len(snapshot) * 7 / 10
-	cutIndex := 0
-	for _, dialogIndex := range r.agent.Memory.DialogIndex {
-		if dialogIndex > targetIndex {
+	if targetIndex >= len(snapshot) {
+		targetIndex = len(snapshot) - 1
+	}
+
+	cutIndex := -1
+	for i := targetIndex; i >= 0; i-- {
+		if snapshot[i].Role == core.RoleUser {
+			cutIndex = i
 			break
 		}
-		cutIndex = dialogIndex
 	}
 	if cutIndex <= 0 || cutIndex >= len(snapshot) {
 		return
@@ -193,10 +187,7 @@ func (r *ReactAgent) CompactHistory() {
 			Role:    core.RoleUser,
 			Content: summary,
 		}}
-		r.agent.Memory.Replace(0, len(prefix), summaryMessage)
-		if err := r.MemorySave(); err != nil {
-			r.agent.Reporter.Errorf("Error saving compacted memory: %v", err)
-		}
+		r.agent.Memory.ReplaceChat(0, len(prefix), summaryMessage)
 	}(prefix)
 }
 

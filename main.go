@@ -9,6 +9,7 @@ import (
 
 	"github.com/Notailab/go-agent/agent/agent"
 	"github.com/Notailab/go-agent/agent/core"
+	"github.com/Notailab/go-agent/agent/storage"
 	"github.com/Notailab/go-agent/agent/tools"
 )
 
@@ -59,7 +60,12 @@ func main() {
 	}
 
 	reporter := &agent.StdoutReporter{}
-	memory := core.NewFileBackedMemory(".memory/HISTORY.jsonl")
+
+	memory := core.NewMemory(
+		storage.NewFileChatStore(".memory/HISTORY.jsonl"),
+		storage.NewFileLongStore(".memory/MEMORY.md"),
+	)
+
 	agent := agent.NewReactAgent(
 		agent.WithLLM(baseURL, model, apiKey),
 		agent.WithTools(
@@ -74,10 +80,6 @@ func main() {
 		agent.WithReporter(reporter),
 		agent.WithMaxTokens(12000),
 	)
-
-	if err := agent.MemoryLoad(); err != nil {
-		reporter.Errorf("Error loading memory: %v", err)
-	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -97,9 +99,5 @@ func main() {
 			reporter.Errorf("Error running agent: %v", err)
 			continue
 		}
-	}
-
-	if err := agent.MemorySave(); err != nil {
-		fmt.Printf("Error saving memory: %v\n", err)
 	}
 }

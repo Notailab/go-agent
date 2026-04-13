@@ -10,6 +10,7 @@ import (
 
 	"github.com/Notailab/go-agent/agent/agent"
 	"github.com/Notailab/go-agent/agent/core"
+	"github.com/Notailab/go-agent/agent/storage"
 )
 
 func TestSummarizeMessageSubAgentUsesCustomPrompt(t *testing.T) {
@@ -32,7 +33,10 @@ func TestSummarizeMessageSubAgentUsesCustomPrompt(t *testing.T) {
 
 	react := agent.NewReactAgent(
 		agent.WithLLM(server.URL, "test-model", "test-key"),
-		agent.WithMemory(core.NewMemory()),
+		agent.WithMemory(core.NewMemory(
+			storage.NewInMemoryChatStore(),
+			storage.NewInMemoryLongStore(),
+		)),
 	)
 
 	sub := agent.SummarizeMessageSubAgent(react)
