@@ -16,7 +16,7 @@ func NewLongMemoryTool(memory *core.Memory) *LongMemoryTool {
 }
 
 func (t *LongMemoryTool) Name() string {
-	return "Long_memory"
+	return "Memory"
 }
 
 func (t *LongMemoryTool) Description() string {
