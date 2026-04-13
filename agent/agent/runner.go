@@ -75,6 +75,12 @@ func WithTemperature(temperature float64) agentOption {
 	}
 }
 
+func WithStaticSystemPrompt(prompt string) agentOption {
+	return func(a *agent) {
+		a.staticSystemPrompt = prompt
+	}
+}
+
 func (a *agent) Fork() *agent {
 	if a == nil {
 		return &agent{}
@@ -201,7 +207,7 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 				toolCallID := tc.Id
 				name := tc.Function.Name
 				args := tc.Function.Arguments
-
+				
 				a.Reporter.ToolCall(name, args)
 
 				tool, ok := a.Tools.Resolve(name)
