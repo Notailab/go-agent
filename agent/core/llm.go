@@ -129,10 +129,10 @@ func parseStreamLine(parser *streamParser, raw string) (tokens []string) {
 			}
 
 			t := parser.tools[index]
-			if id, ok := toolMap["id"].(string); ok {
+			if id, ok := toolMap["id"].(string); ok && t.id == "" {
 				t.id = id
 			}
-			if typ, ok := toolMap["type"].(string); ok {
+			if typ, ok := toolMap["type"].(string); ok && t.typeName == "" {
 				t.typeName = typ
 			}
 
