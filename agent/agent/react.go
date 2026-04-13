@@ -19,6 +19,7 @@ type ReactAgent struct {
 func NewReactAgent(opts ...agentOption) *ReactAgent {
 	react := &ReactAgent{
 		agent: &agent{
+			Tools:              &core.ToolRegistry{},
 			Reporter:           NoopReporter{},
 			MaxSteps:           50,
 			MaxTokens:          65536,
