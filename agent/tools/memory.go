@@ -54,6 +54,9 @@ func (t *LongMemoryTool) Execute(params string) (string, error) {
 	operation := strings.ToLower(strings.TrimSpace(paramMap["operation"].(string)))
 	index := int(paramMap["index"].(float64))
 	context := strings.TrimSpace(paramMap["context"].(string))
+	if index > 0 {
+		index--
+	}
 
 	var op core.LongMemoryOperation
 
