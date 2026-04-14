@@ -1,6 +1,7 @@
 # go-agent
 
-A small interactive AI Agent written in Go.
+A small interactive AI agent written in Go.
+
 
 ## Features
 
@@ -10,9 +11,12 @@ A small interactive AI Agent written in Go.
   - `Read_file`
   - `Edit_file`
   - `Write_file`
-- Persistent memory stored in `.memory/HISTORY.jsonl`
-- Automatic skill discovery and registration from the `skills` directory
-- Demo CLI entry point in `main.go`
+  - `Memory` for long-term memory entries
+- Two-layer memory system:
+  - chat history for the ongoing conversation
+  - long-term memory for durable facts, preferences, and decisions
+- Automatic skill discovery from the `skills` directory
+- Interactive CLI entry point in [main.go](main.go)
 
 ## Quick Start
 
@@ -45,17 +49,19 @@ go run .
 The demo will:
 
 - load `.env` if present
-- restore memory from `.memory/HISTORY.jsonl`
+- restore chat history from `.memory/HISTORY.jsonl`
+- restore long-term memory from `.memory/MEMORY.md`
 - start an interactive prompt
-- save memory again when you exit
+- persist both memory stores as the session continues
 
 Type `exit` to quit.
+
 
 ## Tools
 
 To add your own tool, implement the `core.Tool` interface and pass it to `agent.WithTools()`.
 
-The interface requires these methods:
+Required methods:
 
 - `Name() string`
 - `Description() string`
@@ -100,6 +106,45 @@ agent.WithTools(
 )
 ```
 
+## Memory
+
+To add your own memory backend, implement `core.ChatMemoryStore` and `core.LongMemoryStore`, then pass them to `core.NewMemory()`.
+
+The chat store requires these methods:
+
+- `Get(int) (core.ChatMessage, error)`
+- `Append(core.ChatMessage) error`
+- `Update(int, core.ChatMessage) error`
+- `Replace(int, int, []core.ChatMessage) error`
+- `Delete(int) error`
+- `List() ([]core.ChatMessage, error)`
+- `Count() (int, error)`
+- `Clear() error`
+- `Clone() core.ChatMemoryStore`
+
+The long memory store uses the same pattern for strings:
+
+- `Get(int) (string, error)`
+- `Append(string) error`
+- `Update(int, string) error`
+- `Replace(int, int, []string) error`
+- `Delete(int) error`
+- `List() ([]string, error)`
+- `Count() (int, error)`
+- `Clear() error`
+- `Clone() core.LongMemoryStore`
+
+Example:
+
+```go
+memory := core.NewMemory(
+    storage.NewFileChatStore(".memory/HISTORY.jsonl"),
+    storage.NewFileLongStore(".memory/MEMORY.md"),
+)
+```
+
+The built-in `Memory` tool manages long-term memory entries with `create`, `update`, and `delete` operations.
+
 ## Skills
 
 Skills are registered through `agent.WithSkills()`. Pass one or more skill directories, and the agent will discover skills automatically.
@@ -112,35 +157,3 @@ agent.WithSkills("skills")
 
 Each skill is a folder that contains a `SKILL.md` file, such as `skills/weather/SKILL.md`.
 The skill loader scans the provided directories, reads each `SKILL.md` frontmatter, and includes that metadata in the system prompt.
-
-## Memory
-
-To use a custom memory backend, implement the `core.MemoryStore` interface and pass it to `core.NewMemoryWithStore()`.
-
-The interface requires these methods:
-
-- `Save(messages []core.ChatMessage) error`
-- `Load(messages *[]core.ChatMessage) error`
-
-Minimal example:
-
-```go
-type CustomStore struct{}
-
-func (s *CustomStore) Save(messages []core.ChatMessage) error {
-    return nil
-}
-
-func (s *CustomStore) Load(messages *[]core.ChatMessage) error {
-    *messages = []core.ChatMessage{}
-    return nil
-}
-```
-
-Use it like this:
-
-```go
-memory := core.NewMemoryWithStore(&CustomStore{})
-```
-
-By default, the demo CLI uses `core.NewFileBackedMemory(".memory/HISTORY.jsonl")`, and it loads and saves memory automatically.
