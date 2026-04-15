@@ -15,7 +15,11 @@ func TestReadFileTool(t *testing.T) {
 
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "read.txt")
-	if err := os.WriteFile(filePath, []byte("Hello, Go Agent!"), 0o644); err != nil {
+	content := make([]byte, 3000)
+	for i := range content {
+		content[i] = 'a'
+	}
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
 
@@ -25,11 +29,22 @@ func TestReadFileTool(t *testing.T) {
 		t.Fatal("Read_file tool not found")
 	}
 
-	output, err := tool.Execute(fmt.Sprintf(`{"file_path":%q,"limit":5}`, filePath))
+	output, err := tool.Execute(fmt.Sprintf(`{"file_path":%q,"offset":7,"limit":2}`, filePath))
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
-	if output != "Hello" {
+	if output != "aa" {
+		t.Fatalf("unexpected output: %q", output)
+	}
+
+	output, err = tool.Execute(fmt.Sprintf(`{"file_path":%q,"offset":7}`, filePath))
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if len(output) != 2000 {
+		t.Fatalf("unexpected output length: %d", len(output))
+	}
+	if output != string(content[7:2007]) {
 		t.Fatalf("unexpected output: %q", output)
 	}
 }
