@@ -158,7 +158,7 @@ func (m *Memory) LongMemory() string {
 		if entry == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%d %s", i+1, entry))
+		lines = append(lines, fmt.Sprintf("%d %s", i, entry))
 	}
 
 	if len(lines) == 0 {

@@ -29,11 +29,11 @@ func (t *LongMemoryTool) Parameters() core.Parameters {
 		Properties: map[string]core.Param{
 			"operation": {
 				Type:        "string",
-				Description: "The operation to perform: create, update, or delete.\nAll three parameters must be present in the request.\n- create: set `index` empty/0 and provide a non-empty `context`.\n- update: provide a valid 1-based `index` and a non-empty `context`.\n- delete: provide a valid 1-based `index` and set `context` to empty.",
+				Description: "The operation to perform: create, update, or delete.\nAll three parameters must be present in the request.\n- create: set `index` empty/0 and provide a non-empty `context`.\n- update: provide a valid 0-based `index` and a non-empty `context`.\n- delete: provide a valid 0-based `index` and set `context` to empty.",
 			},
 			"index": {
 				Type:        "integer",
-				Description: "The 1-based index of the memory entry.\nFor `create` pass 0 (or an empty/zero value). Required and must be valid for `update` and `delete`.",
+				Description: "The 0-based index of the memory entry.\nFor `create` pass 0. Required and must be valid for `update` and `delete`.",
 			},
 			"context": {
 				Type:        "string",
@@ -54,9 +54,6 @@ func (t *LongMemoryTool) Execute(params string) (string, error) {
 	operation := strings.ToLower(strings.TrimSpace(paramMap["operation"].(string)))
 	index := int(paramMap["index"].(float64))
 	context := strings.TrimSpace(paramMap["context"].(string))
-	if index > 0 {
-		index--
-	}
 
 	var op core.LongMemoryOperation
 
