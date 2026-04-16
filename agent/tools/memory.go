@@ -44,32 +44,36 @@ func (t *LongMemoryTool) Parameters() core.Parameters {
 	}
 }
 
-func (t *LongMemoryTool) Execute(params string) (string, error) {
-	paramMap, err := core.ParseParams(params, "operation", "index", "context")
-
+func (t *LongMemoryTool) Execute(paramsJson string) (string, error) {
+	params, err := core.ParseToolParams(paramsJson, t.Parameters())
 	if err != nil {
 		return "", err
 	}
 
-	operation := strings.ToLower(strings.TrimSpace(paramMap["operation"].(string)))
-	index := int(paramMap["index"].(float64))
-	context := strings.TrimSpace(paramMap["context"].(string))
+	operation := strings.ToLower(strings.TrimSpace(params["operation"].(string)))
+	index := params["index"].(int)
+	context := params["context"].(string)
 
 	var op core.LongMemoryOperation
 
 	switch operation {
 	case "create":
-		if strings.TrimSpace(context) == "" {
+		if context == "" {
 			return "", fmt.Errorf("context is required for create")
 		}
 		op = core.LongMemoryCreate
 	case "update":
-		if strings.TrimSpace(context) == "" {
+		if index < 0 {
+			return "", fmt.Errorf("index must be non-negative for update")
+		}
+		if context == "" {
 			return "", fmt.Errorf("context is required for update")
 		}
 		op = core.LongMemoryUpdate
 	case "delete":
-		context = ""
+		if index < 0 {
+			return "", fmt.Errorf("index must be non-negative for delete")
+		}
 		op = core.LongMemoryDelete
 	default:
 		return "", fmt.Errorf("unsupported operation: %s", operation)

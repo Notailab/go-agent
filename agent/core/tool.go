@@ -10,7 +10,7 @@ type Tool interface {
 	Name() string
 	Description() string
 	Parameters() Parameters
-	Execute(input string) (string, error)
+	Execute(string) (string, error)
 }
 
 type FunctionTool struct {
@@ -33,24 +33,43 @@ func FunctionFromTool(tool Tool) FunctionTool {
 
 type ToolRegistry struct {
 	tools        map[string]Tool
-	toolOrder    []string
 	functionTool []FunctionTool
 }
 
-func ParseParams(params string, keys ...string) (map[string]interface{}, error) {
-	var paramMap map[string]interface{}
-	err := json.Unmarshal([]byte(params), &paramMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse parameters: %v", err)
+func ParseToolParams(paramsJson string, paramsDef Parameters) (map[string]any, error) {
+	var raw map[string]any
+	if paramsJson == "" {
+		return nil, fmt.Errorf("parameters JSON is empty")
+	}
+	if err := json.Unmarshal([]byte(paramsJson), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse parameters JSON: %v", err)
 	}
 
-	result := make(map[string]interface{})
-	for _, key := range keys {
-		if val, ok := paramMap[key]; ok {
-			result[key] = val
-		} else {
-			return nil, fmt.Errorf("missing required parameter: %s", key)
+	var missing []string
+	for _, key := range paramsDef.Required {
+		if _, ok := raw[key]; !ok {
+			missing = append(missing, key)
 		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing required parameters: %v", missing)
+	}
+
+	result := make(map[string]any, len(paramsDef.Properties))
+
+	for key, param := range paramsDef.Properties {
+		val, exists := raw[key]
+		if !exists {
+			val = param.Default
+		}
+		convertedVal, err := convertToType(val, param.Type)
+		if err != nil {
+			if exists {
+				return nil, fmt.Errorf("invalid type for parameter %q: %v", key, err)
+			}
+			return nil, fmt.Errorf("failed to convert parameter %q: %v", key, err)
+		}
+		result[key] = convertedVal
 	}
 	return result, nil
 }

@@ -39,14 +39,15 @@ func (t *EditFileTool) Parameters() core.Parameters {
 	}
 }
 
-func (t *EditFileTool) Execute(params string) (string, error) {
-	paramMap, err := core.ParseParams(params, "file_path", "old_text", "new_text")
+func (t *EditFileTool) Execute(paramsJson string) (string, error) {
+	params, err := core.ParseToolParams(paramsJson, t.Parameters())
 	if err != nil {
 		return "", err
 	}
-	filePath, _ := paramMap["file_path"].(string)
-	oldText, _ := paramMap["old_text"].(string)
-	newText, _ := paramMap["new_text"].(string)
+
+	filePath := params["file_path"].(string)
+	oldText := params["old_text"].(string)
+	newText := params["new_text"].(string)
 
 	content, err := os.ReadFile(filePath)
 	if err != nil {

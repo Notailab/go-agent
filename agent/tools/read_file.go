@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -33,34 +32,24 @@ func (t *ReadFileTool) Parameters() core.Parameters {
 			"limit": {
 				Type:        "integer",
 				Description: "Optional limit on number of bytes to read from the offset; defaults to 2000 bytes",
+				Default:     2000,
 			},
 		},
 		Required: []string{"file_path", "offset"},
 	}
 }
 
-func (t *ReadFileTool) Execute(params string) (string, error) {
-	var paramMap map[string]interface{}
-	err := json.Unmarshal([]byte(params), &paramMap)
+func (t *ReadFileTool) Execute(paramsJson string) (string, error) {
+	params, err := core.ParseToolParams(paramsJson, t.Parameters())
 	if err != nil {
 		return "", err
 	}
-	filePath, ok := paramMap["file_path"].(string)
-	if !ok || filePath == "" {
-		return "", fmt.Errorf("missing required parameter: file_path")
-	}
-	offsetValue, ok := paramMap["offset"].(float64)
-	if !ok {
-		return "", fmt.Errorf("missing required parameter: offset")
-	}
-	limit := 2000
-	if rawLimit, ok := paramMap["limit"]; ok {
-		if limitValue, ok := rawLimit.(float64); ok {
-			limit = int(limitValue)
-		}
-	}
 
-	content, err := read_file(filePath, int(offsetValue), limit)
+	filePath := params["file_path"].(string)
+	offset := params["offset"].(int)
+	limit := params["limit"].(int)
+
+	content, err := read_file(filePath, offset, limit)
 	if err != nil {
 		return "", err
 	}

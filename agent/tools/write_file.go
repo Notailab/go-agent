@@ -34,13 +34,14 @@ func (t *WriteFileTool) Parameters() core.Parameters {
 	}
 }
 
-func (t *WriteFileTool) Execute(params string) (string, error) {
-	paramMap, err := core.ParseParams(params, "file_path", "content")
+func (t *WriteFileTool) Execute(paramsJson string) (string, error) {
+	params, err := core.ParseToolParams(paramsJson, t.Parameters())
 	if err != nil {
 		return "", err
 	}
-	filePath, _ := paramMap["file_path"].(string)
-	content, _ := paramMap["content"].(string)
+
+	filePath, _ := params["file_path"].(string)
+	content, _ := params["content"].(string)
 
 	err = os.WriteFile(filePath, []byte(content), 0644)
 	if err != nil {

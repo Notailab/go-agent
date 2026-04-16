@@ -3,7 +3,6 @@ package tools
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,20 +43,20 @@ func (t *BashTool) Parameters() core.Parameters {
 	}
 }
 
-func (t *BashTool) Execute(params string) (string, error) {
-	var paramMap map[string]interface{}
-	if err := json.Unmarshal([]byte(params), &paramMap); err != nil {
-		return "", fmt.Errorf("failed to parse parameters: %v", err)
+func (t *BashTool) Execute(paramsJson string) (string, error) {
+	params, err := core.ParseToolParams(paramsJson, t.Parameters())
+	if err != nil {
+		return "", err
 	}
 
-	rawCommand, ok := paramMap["command"].(string)
-	if !ok || strings.TrimSpace(rawCommand) == "" {
+	rawCommand := params["command"].(string)
+	if strings.TrimSpace(rawCommand) == "" {
 		return "", fmt.Errorf("missing required parameter: command")
 	}
 	command := rawCommand
 
 	timeout := 30 * time.Second
-	if rawTimeout, ok := paramMap["timeout_seconds"]; ok {
+	if rawTimeout, ok := params["timeout_seconds"]; ok && rawTimeout != nil {
 		if timeoutValue, ok := rawTimeout.(float64); ok && timeoutValue > 0 {
 			timeout = time.Duration(timeoutValue) * time.Second
 		}
@@ -68,7 +67,7 @@ func (t *BashTool) Execute(params string) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-lc", command)
 
-	if rawCwd, ok := paramMap["cwd"].(string); ok && strings.TrimSpace(rawCwd) != "" {
+	if rawCwd, ok := params["cwd"].(string); ok && strings.TrimSpace(rawCwd) != "" {
 		cwd := strings.TrimSpace(rawCwd)
 		if info, err := os.Stat(cwd); err != nil {
 			return "", fmt.Errorf("invalid cwd: %w", err)
@@ -83,7 +82,7 @@ func (t *BashTool) Execute(params string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		combined := strings.TrimSpace(stdout.String())
 		stderrText := strings.TrimSpace(stderr.String())
