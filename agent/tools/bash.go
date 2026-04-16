@@ -57,7 +57,7 @@ func (t *BashTool) Execute(paramsJson string) (string, error) {
 
 	timeout := 30 * time.Second
 	if rawTimeout, ok := params["timeout_seconds"]; ok && rawTimeout != nil {
-		if timeoutValue, ok := rawTimeout.(float64); ok && timeoutValue > 0 {
+		if timeoutValue, ok := rawTimeout.(int); ok && timeoutValue > 0 {
 			timeout = time.Duration(timeoutValue) * time.Second
 		}
 	}
