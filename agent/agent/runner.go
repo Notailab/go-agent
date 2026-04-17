@@ -207,7 +207,7 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 				toolCallID := tc.Id
 				name := tc.Function.Name
 				args := tc.Function.Arguments
-				
+
 				a.Reporter.ToolCall(name, args)
 
 				tool, ok := a.Tools.Resolve(name)

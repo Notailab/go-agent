@@ -78,6 +78,7 @@ func (r *ReactAgent) SystemReminder() string {
 	parts := []string{
 		"<core-rules>",
 		r.agent.Memory.LongMemory(),
+		"Current time: " + time.Now().Format(time.RFC3339),
 		"</core-rules>",
 	}
 	return strings.Join(parts, "\n\n")
