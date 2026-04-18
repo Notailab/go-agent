@@ -1,4 +1,4 @@
-package agent
+package reporter
 
 import (
 	"bytes"
@@ -9,30 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Notailab/go-agent/agent/agent"
 )
-
-type Reporter interface {
-	ToolCall(name, args string)
-	AssistantStart()
-	AssistantDelta(content string)
-	AssistantEnd()
-	AssistantMessage(content string)
-	Errorf(format string, args ...any)
-}
-
-type NoopReporter struct{}
-
-func (NoopReporter) ToolCall(name, args string) {}
-
-func (NoopReporter) AssistantStart() {}
-
-func (NoopReporter) AssistantDelta(content string) {}
-
-func (NoopReporter) AssistantEnd() {}
-
-func (NoopReporter) AssistantMessage(content string) {}
-
-func (NoopReporter) Errorf(format string, args ...any) {}
 
 type StdoutReporter struct {
 	mu                sync.Mutex
@@ -49,45 +28,67 @@ func (r *StdoutReporter) ResetDialog() {
 	r.mu.Unlock()
 }
 
-func (r *StdoutReporter) ToolCall(name, args string) {
-	formattedArgs := summarizeInlineArgs(args)
-	if formattedArgs == "" {
-		formattedArgs = "(no arguments)"
+func (r *StdoutReporter) BeforeLLM(ctx agent.HookContext) {
+	r.mu.Lock()
+	r.streamBuffer.Reset()
+	r.streamInCodeBlock = false
+	r.mu.Unlock()
+
+	if ctx.Stream {
+		r.printAssistantHeader()
 	}
-
-	fmt.Printf("%s● Tool%s %s%s%s %s%s%s\n", colorCyanBold, colorReset, colorYellowBold, name, colorReset, colorMagenta, formattedArgs, colorReset)
 }
 
-func (r *StdoutReporter) AssistantStart() {
-	r.printAssistantHeader()
-}
-
-func (r *StdoutReporter) AssistantDelta(content string) {
-	if strings.TrimSpace(content) == "" {
+func (r *StdoutReporter) OnLLM(ctx agent.HookContext) {
+	if strings.TrimSpace(ctx.Delta) == "" {
 		return
 	}
 
 	r.mu.Lock()
-	r.streamBuffer.WriteString(content)
+	r.streamBuffer.WriteString(ctx.Delta)
 	r.flushStreamLocked(false)
 	r.mu.Unlock()
 }
 
-func (r *StdoutReporter) AssistantEnd() {
-	r.mu.Lock()
-	r.flushStreamLocked(true)
-	r.mu.Unlock()
-	fmt.Println()
-}
+func (r *StdoutReporter) AfterLLM(ctx agent.HookContext) {
+	if ctx.Error != nil {
+		r.Errorf("LLM error: %v", ctx.Error)
+		return
+	}
 
-func (r *StdoutReporter) AssistantMessage(content string) {
-	content = strings.TrimSpace(content)
+	if ctx.Stream {
+		r.mu.Lock()
+		r.flushStreamLocked(true)
+		r.mu.Unlock()
+		fmt.Println()
+		return
+	}
+
+	content := ""
+	if len(ctx.Result.Choices) > 0 {
+		content = strings.TrimSpace(ctx.Result.Choices[0].Message.Content)
+	}
 	if content == "" {
 		return
 	}
 
 	r.printAssistantHeader()
 	fmt.Println(renderMarkdownBlock(content))
+}
+
+func (r *StdoutReporter) BeforeTool(ctx agent.HookContext) {
+	formattedArgs := summarizeInlineArgs(ctx.ToolCall.Function.Arguments)
+	if formattedArgs == "" {
+		formattedArgs = "(no arguments)"
+	}
+
+	fmt.Printf("%s● Tool%s %s%s%s %s%s%s\n", colorCyanBold, colorReset, colorYellowBold, ctx.ToolCall.Function.Name, colorReset, colorMagenta, formattedArgs, colorReset)
+}
+
+func (r *StdoutReporter) AfterTool(ctx agent.HookContext) {
+	if ctx.Error != nil {
+		r.Errorf("tool %s failed: %v", ctx.ToolCall.Function.Name, ctx.Error)
+	}
 }
 
 func (r *StdoutReporter) Errorf(format string, args ...any) {
@@ -132,12 +133,11 @@ func (r *StdoutReporter) renderStreamMarkdown(content string, final bool) string
 		if !final && isLast && line == "" {
 			continue
 		}
-		if line == "" && !r.streamInCodeBlock {
+		rendered, keepOpen := renderMarkdownLine(line, r.streamInCodeBlock)
+		if rendered == "" && !keepOpen {
 			builder.WriteString("\n")
 			continue
 		}
-
-		rendered, keepOpen := r.renderStreamLine(line)
 		builder.WriteString(rendered)
 		if !isLast || final {
 			builder.WriteString("\n")
@@ -146,44 +146,6 @@ func (r *StdoutReporter) renderStreamMarkdown(content string, final bool) string
 	}
 
 	return builder.String()
-}
-
-func (r *StdoutReporter) renderStreamLine(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-
-	if strings.HasPrefix(trimmed, "```") {
-		if r.streamInCodeBlock {
-			return renderCodeBlockLine(line, true), false
-		}
-		return renderCodeBlockLine(line, true), true
-	}
-
-	if r.streamInCodeBlock {
-		return renderCodeBlockLine(line, false), true
-	}
-
-	if trimmed == "" {
-		return "", false
-	}
-
-	if strings.HasPrefix(trimmed, "#") {
-		level := 0
-		for level < len(trimmed) && trimmed[level] == '#' {
-			level++
-		}
-		headline := strings.TrimSpace(trimmed[level:])
-		return colorCyanBold + strings.Repeat("#", level) + " " + formatInlineMarkdown(headline) + colorReset, false
-	}
-
-	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
-		return colorYellowBold + "• " + colorReset + formatInlineMarkdown(strings.TrimSpace(trimmed[2:])), false
-	}
-
-	if strings.HasPrefix(trimmed, ">") {
-		return colorDim + "│ " + colorReset + formatInlineMarkdown(strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))), false
-	}
-
-	return formatInlineMarkdown(line), false
 }
 
 const (
@@ -279,61 +241,55 @@ func renderMarkdownBlock(content string) string {
 
 	for _, rawLine := range lines {
 		line := strings.TrimRight(rawLine, "\r")
-		trimmed := strings.TrimSpace(line)
-
-		switch {
-		case strings.HasPrefix(trimmed, "```"):
-			if inCodeBlock {
-				builder.WriteString(renderCodeBlockLine(line, true))
-				builder.WriteString("\n")
-				inCodeBlock = false
-				continue
-			}
-			inCodeBlock = true
-			builder.WriteString(renderCodeBlockLine(line, true))
+		rendered, keepOpen := renderMarkdownLine(line, inCodeBlock)
+		if rendered == "" && !keepOpen {
 			builder.WriteString("\n")
 			continue
-		case inCodeBlock:
-			builder.WriteString(renderCodeBlockLine(line, false))
-			builder.WriteString("\n")
-			continue
-		case trimmed == "":
-			builder.WriteString("\n")
-			continue
-		case strings.HasPrefix(trimmed, "#"):
-			level := 0
-			for level < len(trimmed) && trimmed[level] == '#' {
-				level++
-			}
-			headline := strings.TrimSpace(trimmed[level:])
-			builder.WriteString(colorCyanBold)
-			builder.WriteString(strings.Repeat("#", level))
-			builder.WriteString(" ")
-			builder.WriteString(formatInlineMarkdown(headline))
-			builder.WriteString(colorReset)
-			builder.WriteString("\n")
-			continue
-		case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
-			builder.WriteString(colorYellowBold)
-			builder.WriteString("• ")
-			builder.WriteString(colorReset)
-			builder.WriteString(formatInlineMarkdown(strings.TrimSpace(trimmed[2:])))
-			builder.WriteString("\n")
-			continue
-		case strings.HasPrefix(trimmed, ">"):
-			builder.WriteString(colorDim)
-			builder.WriteString("│ ")
-			builder.WriteString(colorReset)
-			builder.WriteString(formatInlineMarkdown(strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))))
-			builder.WriteString("\n")
-			continue
-		default:
-			builder.WriteString(formatInlineMarkdown(line))
-			builder.WriteString("\n")
 		}
+		builder.WriteString(rendered)
+		builder.WriteString("\n")
+		inCodeBlock = keepOpen
 	}
 
 	return strings.TrimRight(builder.String(), "\n")
+}
+
+func renderMarkdownLine(line string, inCodeBlock bool) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+
+	if strings.HasPrefix(trimmed, "```") {
+		if inCodeBlock {
+			return renderCodeBlockLine(line, true), false
+		}
+		return renderCodeBlockLine(line, true), true
+	}
+
+	if inCodeBlock {
+		return renderCodeBlockLine(line, false), true
+	}
+
+	if trimmed == "" {
+		return "", false
+	}
+
+	if strings.HasPrefix(trimmed, "#") {
+		level := 0
+		for level < len(trimmed) && trimmed[level] == '#' {
+			level++
+		}
+		headline := strings.TrimSpace(trimmed[level:])
+		return colorCyanBold + strings.Repeat("#", level) + " " + formatInlineMarkdown(headline) + colorReset, false
+	}
+
+	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+		return colorYellowBold + "• " + colorReset + formatInlineMarkdown(strings.TrimSpace(trimmed[2:])), false
+	}
+
+	if strings.HasPrefix(trimmed, ">") {
+		return colorDim + "│ " + colorReset + formatInlineMarkdown(strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))), false
+	}
+
+	return formatInlineMarkdown(line), false
 }
 
 func formatInlineMarkdown(text string) string {

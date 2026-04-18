@@ -64,44 +64,46 @@ func NewLLMClient(baseURL, apiKey, model string) *LLMClient {
 	}
 }
 
-func parseStreamLine(parser *streamParser, raw string) (tokens []string) {
+func parseStreamLine(parser *streamParser, raw string) (types, tokens []string) {
 	line := strings.TrimSpace(raw)
 	if line == "" || line == "[DONE]" {
-		return nil
+		return nil, nil
 	}
 	if !strings.HasPrefix(line, "data:") {
-		return nil
+		return nil, nil
 	}
 	line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
 	var chunk map[string]interface{}
 	if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-		return nil
+		return nil, nil
 	}
 
 	choices, ok := chunk["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	ch0, ok := choices[0].(map[string]interface{})
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	delta, ok := ch0["delta"].(map[string]interface{})
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	for _, key := range []string{"thinking", "thought", "reasoning", "reasoning_content"} {
 		if v, ok := delta[key].(string); ok && v != "" {
+			types = append(types, key)
 			tokens = append(tokens, v)
 			parser.reasoning.WriteString(v)
 		}
 	}
 
 	if content, ok := delta["content"].(string); ok && content != "" {
+		types = append(types, "content")
 		tokens = append(tokens, content)
 		parser.content.WriteString(content)
 	}
@@ -146,7 +148,7 @@ func parseStreamLine(parser *streamParser, raw string) (tokens []string) {
 		}
 	}
 
-	return tokens
+	return types, tokens
 }
 
 func streamUsageEstimate(content string, toolCalls []ToolCall) int {
@@ -202,13 +204,10 @@ func estimateChatTokens(messages []ChatMessage, tools []FunctionTool) int {
 	return estimate
 }
 
-func (c *LLMClient) streamResultFromParser(parser *streamParser, rawContent string) LLMResult {
+func (c *LLMClient) streamResultFromParser(parser *streamParser) LLMResult {
 	result := LLMResult{}
 	content := strings.TrimSpace(parser.content.String())
 	reasoning := strings.TrimSpace(parser.reasoning.String())
-	if content == "" {
-		content = strings.TrimSpace(rawContent)
-	}
 
 	var keys []int
 	for key := range parser.tools {
@@ -330,7 +329,7 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Fu
 	return result, nil
 }
 
-func (c *LLMClient) StreamChat(ctx context.Context, messages []ChatMessage, tools []FunctionTool, temperature float64, onToken func(string) error) (LLMResult, error) {
+func (c *LLMClient) StreamChat(ctx context.Context, messages []ChatMessage, tools []FunctionTool, temperature float64, onToken func(string, string)) (LLMResult, error) {
 	url := strings.TrimRight(c.BaseURL, "/") + "/chat/completions"
 	req := ChatRequest{Model: c.Model, Messages: messages, Tools: tools, Stream: true, Temperature: temperature}
 	promptTokens := estimateChatTokens(messages, tools)
@@ -358,29 +357,25 @@ func (c *LLMClient) StreamChat(ctx context.Context, messages []ChatMessage, tool
 	}
 
 	parser := newStreamParser()
-	var streamedContent strings.Builder
 	reader := bufio.NewReader(resp.Body)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				result := c.streamResultFromParser(parser, streamedContent.String())
+				result := c.streamResultFromParser(parser)
 				result.Usage.PromptTokens = promptTokens
 				result.Usage.TotalTokens = promptTokens + result.Usage.TotalTokens
 				return result, nil
 			}
 			return LLMResult{}, err
 		}
-		tokens := parseStreamLine(parser, line)
-		for _, t := range tokens {
+		tokenTypes, tokens := parseStreamLine(parser, line)
+		for i, t := range tokens {
 			if t == "" {
 				continue
 			}
-			streamedContent.WriteString(t)
 			if onToken != nil {
-				if err := onToken(t); err != nil {
-					return LLMResult{}, err
-				}
+				onToken(tokenTypes[i], t)
 			}
 		}
 	}

@@ -158,32 +158,43 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 			return "", ctx.Err()
 		}
 
+		msgs := append(messages, a.Memory.ChatMemory()...)
+		tools := a.Tools.Define()
+
+		hookContext := HookContext{
+			Step:     step,
+			Stream:   stream,
+			Messages: msgs,
+			Tools:    tools,
+		}
+
+		a.Reporter.BeforeLLM(hookContext)
+
 		var (
 			res core.LLMResult
 			err error
 		)
 
 		if stream {
-			a.Reporter.AssistantStart()
-			res, err = a.LLM.StreamChat(
-				ctx,
-				append(messages, a.Memory.ChatMemory()...),
-				a.Tools.Define(),
-				a.Temperature,
-				func(token string) error {
-					a.Reporter.AssistantDelta(token)
-					return nil
+			res, err = a.LLM.StreamChat(ctx, msgs, tools, a.Temperature,
+				func(tokenType, token string) {
+					a.Reporter.OnLLM(HookContext{
+						Step:      step,
+						Stream:    true,
+						Messages:  msgs,
+						Tools:     tools,
+						TokenType: tokenType,
+						Delta:     token,
+					})
 				},
 			)
-			a.Reporter.AssistantEnd()
 		} else {
-			res, err = a.LLM.Chat(
-				ctx,
-				append(messages, a.Memory.ChatMemory()...),
-				a.Tools.Define(),
-				a.Temperature,
-			)
+			res, err = a.LLM.Chat(ctx, msgs, tools, a.Temperature)
 		}
+
+		hookContext.Result = res
+		hookContext.Error = err
+		a.Reporter.AfterLLM(hookContext)
 
 		if err != nil {
 			return "", err
@@ -191,46 +202,55 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 		if len(res.Choices) == 0 {
 			return "", fmt.Errorf("no choices returned from llm")
 		}
+
 		msg := res.Choices[0].Message
 		a.CurTokens = res.Usage.TotalTokens
 
 		if msg.Content != "" {
 			a.Memory.AddChat(core.RoleAssistant, msg.Content)
-			if !stream {
-				a.Reporter.AssistantMessage(msg.Content)
-			}
 		}
 
-		if len(msg.ToolCalls) > 0 {
-			a.Memory.AddToolCall(msg.ToolCalls)
-			for _, tc := range msg.ToolCalls {
-				toolCallID := tc.Id
-				name := tc.Function.Name
-				args := tc.Function.Arguments
+		if len(msg.ToolCalls) == 0 {
+			if msg.Content != "" {
+				return msg.Content, nil
+			}
+			return msg.ReasoningContent, nil
+		}
 
-				a.Reporter.ToolCall(name, args)
+		a.Memory.AddToolCall(msg.ToolCalls)
+		for _, tc := range msg.ToolCalls {
+			toolCallID := tc.Id
+			name := tc.Function.Name
+			args := tc.Function.Arguments
 
-				tool, ok := a.Tools.Resolve(name)
-				if !ok {
-					a.Memory.AddToolResult(toolCallID, fmt.Sprintf("tool %s not found", name))
-					continue
-				}
+			toolHook := HookContext{
+				Step:     step,
+				Stream:   stream,
+				Messages: msgs,
+				Tools:    tools,
+				Result:   res,
+				ToolCall: tc,
+			}
 
-				output, err := tool.Execute(args)
+			a.Reporter.BeforeTool(toolHook)
+
+			var output string
+			tool, ok := a.Tools.Resolve(name)
+			if ok {
+				output, err = tool.Execute(args)
 				if err != nil {
-					output = fmt.Sprintf("error executing %s: %v", name, err)
+					output = fmt.Sprintf("error executing tool %s: %v", name, err)
 				}
-
-				a.Memory.AddToolResult(toolCallID, output)
+			} else {
+				err = fmt.Errorf("tool %s not found", name)
+				output = err.Error()
 			}
 
-			continue
+			a.Memory.AddToolResult(toolCallID, output)
+			toolHook.Output = output
+			toolHook.Error = err
+			a.Reporter.AfterTool(toolHook)
 		}
-
-		if msg.Content != "" {
-			return msg.Content, nil
-		}
-		return msg.ReasoningContent, nil
 	}
 
 	return "", fmt.Errorf("max steps reached")

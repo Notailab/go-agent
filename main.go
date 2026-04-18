@@ -11,6 +11,7 @@ import (
 	"github.com/Notailab/go-agent/agent/core"
 	"github.com/Notailab/go-agent/agent/storage"
 	"github.com/Notailab/go-agent/agent/tools"
+	"github.com/Notailab/go-agent/agent/reporter"
 )
 
 func LoadEnvFile(filepath string) error {
@@ -59,7 +60,7 @@ func main() {
 		return
 	}
 
-	reporter := &agent.StdoutReporter{}
+	reporter := &reporter.StdoutReporter{}
 
 	memory := core.NewMemory(
 		storage.NewFileChatStore(".memory/HISTORY.jsonl"),
