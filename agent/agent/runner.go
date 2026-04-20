@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/Notailab/go-agent/agent/core"
 )
@@ -218,8 +219,16 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 		}
 
 		a.Memory.AddToolCall(msg.ToolCalls)
-		for _, tc := range msg.ToolCalls {
-			toolCallID := tc.Id
+
+		type toolExecutionResult struct {
+			output string
+			err    error
+		}
+
+		results := make([]toolExecutionResult, len(msg.ToolCalls))
+		var wg sync.WaitGroup
+
+		for i, tc := range msg.ToolCalls {
 			name := tc.Function.Name
 			args := tc.Function.Arguments
 
@@ -234,22 +243,46 @@ func (a *agent) runLoop(ctx context.Context, messages []core.ChatMessage, stream
 
 			a.Reporter.BeforeTool(toolHook)
 
-			var output string
-			tool, ok := a.Tools.Resolve(name)
-			if ok {
-				output, err = tool.Execute(args)
-				if err != nil {
-					output = fmt.Sprintf("error executing tool %s: %v", name, err)
-				}
-			} else {
-				err = fmt.Errorf("tool %s not found", name)
-				output = err.Error()
-			}
+			wg.Add(1)
+			go func(index int, toolName, toolArgs string) {
+				defer wg.Done()
 
-			a.Memory.AddToolResult(toolCallID, output)
-			toolHook.Output = output
-			toolHook.Error = err
-			a.Reporter.AfterTool(toolHook)
+				var (
+					output string
+					execErr error
+				)
+
+				tool, ok := a.Tools.Resolve(toolName)
+				if ok {
+					output, execErr = tool.Execute(toolArgs)
+					if execErr != nil {
+						output = fmt.Sprintf("error executing tool %s: %v", toolName, execErr)
+					}
+				} else {
+					execErr = fmt.Errorf("tool %s not found", toolName)
+					output = execErr.Error()
+				}
+
+				results[index] = toolExecutionResult{output: output, err: execErr}
+			}(i, name, args)
+		}
+
+		wg.Wait()
+
+		for i, tc := range msg.ToolCalls {
+			result := results[i]
+			toolCallID := tc.Id
+			a.Memory.AddToolResult(toolCallID, result.output)
+			a.Reporter.AfterTool(HookContext{
+				Step:     step,
+				Stream:   stream,
+				Messages: msgs,
+				Tools:    tools,
+				Result:   res,
+				ToolCall: tc,
+				Output:   result.output,
+				Error:    result.err,
+			})
 		}
 	}
 
