@@ -15,6 +15,7 @@ A small interactive AI agent written in Go.
 - Two-layer memory system:
   - chat history for the ongoing conversation
   - long-term memory for durable facts, preferences, and decisions
+- Pluggable reporter hooks for streaming output and tool call logging
 - Automatic skill discovery from the `skills` directory
 - Interactive CLI entry point in [main.go](main.go)
 
@@ -51,6 +52,7 @@ The demo will:
 - load `.env` if present
 - restore chat history from `.memory/HISTORY.jsonl`
 - restore long-term memory from `.memory/MEMORY.md`
+- print agent progress through `agent/reporter.StdoutReporter`
 - start an interactive prompt
 - persist both memory stores as the session continues
 
@@ -157,3 +159,19 @@ agent.WithSkills("skills")
 
 Each skill is a folder that contains a `SKILL.md` file, such as `skills/weather/SKILL.md`.
 The skill loader scans the provided directories, reads each `SKILL.md` frontmatter, and includes that metadata in the system prompt.
+
+## Reporter
+
+Reporters are used to observe LLM requests, streamed tokens, and tool calls.
+
+The shared hook types and `Reporter` interface live in [agent/reporter.go](agent/reporter.go), and the default stdout implementation lives in [agent/reporter/std_reporter.go](agent/reporter/std_reporter.go).
+
+The CLI uses the stdout reporter directly:
+
+```go
+import "github.com/Notailab/go-agent/agent/reporter"
+
+output := &reporter.StdoutReporter{}
+```
+
+If you want to add your own reporter, implement the `agent.Reporter` interface and pass it to `agent.WithReporter()`.
