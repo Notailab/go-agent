@@ -57,6 +57,9 @@ func (s *FileLongStore) Append(memory string) error {
 		return errors.New("memories is nil")
 	}
 	s.memories = append(s.memories, memory)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -82,6 +85,9 @@ func (s *FileLongStore) Update(index int, memory string) error {
 		return errors.New("index out of bounds")
 	}
 	s.memories[index] = memory
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -113,6 +119,9 @@ func (s *FileLongStore) Replace(start, end int, memories []string) error {
 		return errors.New("start index cannot be greater than end index")
 	}
 	s.memories = append(s.memories[:start], append(memories, s.memories[end:]...)...)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -138,6 +147,9 @@ func (s *FileLongStore) Delete(index int) error {
 		return errors.New("index out of bounds")
 	}
 	s.memories = append(s.memories[:index], s.memories[index+1:]...)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -174,6 +186,9 @@ func (s *FileLongStore) Clear() error {
 		return errors.New("memories is nil")
 	}
 	s.memories = nil
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err

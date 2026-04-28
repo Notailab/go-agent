@@ -6,9 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 
 	"github.com/Notailab/go-agent/agent/core"
 )
+
+func ensureParentDir(path string) error {
+	dir := filepath.Dir(path)
+	if dir == "." || dir == "" {
+		return nil
+	}
+	return os.MkdirAll(dir, 0755)
+}
 
 type FileChatStore struct {
 	path     string
@@ -57,6 +66,9 @@ func (s *FileChatStore) Append(message core.ChatMessage) error {
 		return errors.New("messages is nil")
 	}
 	s.messages = append(s.messages, message)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -82,6 +94,9 @@ func (s *FileChatStore) Update(index int, message core.ChatMessage) error {
 		return errors.New("index out of bounds")
 	}
 	s.messages[index] = message
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -107,6 +122,9 @@ func (s *FileChatStore) Replace(start, end int, messages []core.ChatMessage) err
 		return errors.New("index out of bounds")
 	}
 	s.messages = append(s.messages[:start], append(messages, s.messages[end:]...)...)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -132,6 +150,9 @@ func (s *FileChatStore) Delete(index int) error {
 		return errors.New("index out of bounds")
 	}
 	s.messages = append(s.messages[:index], s.messages[index+1:]...)
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -168,6 +189,9 @@ func (s *FileChatStore) Clear() error {
 		return errors.New("messages is nil")
 	}
 	s.messages = nil
+	if err := ensureParentDir(s.path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
